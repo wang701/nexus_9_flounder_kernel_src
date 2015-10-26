@@ -60,7 +60,7 @@
 #define DBG(stuff...)	do {} while (0)
 #endif
 
-#define YCABLE_CHARGING_CURRENT_UA 500000u
+#define YCABLE_CHARGING_CURRENT_UA 1500000u
 
 struct tegra_otg {
 	struct platform_device *pdev;
@@ -152,6 +152,8 @@ static int otg_notifications(struct notifier_block *nb,
 
 	spin_unlock_irqrestore(&tegra->lock, flags);
 	DBG("%s(%d) tegra->int_status = 0x%lx\n", __func__,
+				__LINE__, tegra->int_status);
+	pr_info("%s(%d) tegra->int_status=%lx\n", __func__,
 				__LINE__, tegra->int_status);
 
 	if (!tegra->suspended)
@@ -273,10 +275,14 @@ static void tegra_otg_vbus_enable(struct regulator *vbus_reg, int on)
 	if (vbus_reg == NULL)
 		return ;
 
-	if (on && vbus_enable && !regulator_enable(vbus_reg))
+	if (on && vbus_enable && !regulator_enable(vbus_reg)) {
 		vbus_enable = 0;
-	else if (!on && !vbus_enable && !regulator_disable(vbus_reg))
+		pr_info("%s(%d) vbus_enable=0\n", __func__, __LINE__);		
+	}
+	else if (!on && !vbus_enable && !regulator_disable(vbus_reg)) {
 		vbus_enable = 1;
+		pr_info("%s(%d) vbus_enable=1\n", __func__, __LINE__);
+	}
 }
 
 static void tegra_start_host(struct tegra_otg *tegra)
@@ -357,9 +363,17 @@ static void tegra_otg_notify_event(struct tegra_otg *tegra, int event)
 
 static int tegra_otg_start_host(struct tegra_otg *tegra, int on)
 {
+	pr_info("%s(%d) support_y_cable=%d, int_status=%lx, USB_VBUS_STATUS=%d\n",
+		__func__, __LINE__, tegra->support_y_cable, tegra->int_status,
+		USB_VBUS_STATUS);
+
 	if (on) {
+		pr_info("%s(%d) on=%d\n", __func__, __LINE__, on);
 		if (tegra->support_y_cable &&
 				(tegra->int_status & USB_VBUS_STATUS)) {
+			pr_info("%s(%d) set current %dmA\n", __func__, __LINE__,
+					YCABLE_CHARGING_CURRENT_UA/1000);
+
 			DBG("%s(%d) set current %dmA\n", __func__, __LINE__,
 					YCABLE_CHARGING_CURRENT_UA/1000);
 			tegra_otg_set_current(tegra->vbus_bat_reg,
@@ -372,6 +386,7 @@ static int tegra_otg_start_host(struct tegra_otg *tegra, int on)
 		tegra_start_host(tegra);
 		tegra_otg_notify_event(tegra, USB_EVENT_ID);
 	} else {
+		pr_info("%s(%d) stop host now\n", __func__, __LINE__);
 		tegra_stop_host(tegra);
 		tegra_otg_notify_event(tegra, USB_EVENT_NONE);
 		tegra_otg_vbus_enable(tegra->vbus_reg, 0);
@@ -407,12 +422,16 @@ static void tegra_change_otg_state(struct tegra_otg *tegra,
 		return;
 	}
 
+	pr_info("%s(%d) requested otg state %s-->%s\n", __func__,
+		__LINE__, tegra_state_name(from), tegra_state_name(to));
+
 	DBG("%s(%d) requested otg state %s-->%s\n", __func__,
 		__LINE__, tegra_state_name(from), tegra_state_name(to));
 
 	if (to != OTG_STATE_UNDEFINED && from != to) {
 		otg->phy->state = to;
-		pr_info("otg state changed: %s --> %s\n", tegra_state_name(from), tegra_state_name(to));
+		pr_info("%s(%d) otg state changed: %s --> %s\n", __func__, __LINE__,
+				tegra_state_name(from), tegra_state_name(to));
 
 		if (from == OTG_STATE_A_SUSPEND) {
 			if (to == OTG_STATE_B_PERIPHERAL && otg->gadget)
@@ -427,8 +446,12 @@ static void tegra_change_otg_state(struct tegra_otg *tegra,
 	}
 
 	if (tegra->support_y_cable && tegra->y_cable_conn &&
-			from == to && from == OTG_STATE_A_HOST) {
+			from == to && from == OTG_STATE_A_HOST) { 
+		pr_info("%s(%d) support_y_cable=%d, y_cable_conn=%d\n", __func__, __LINE__,
+				tegra->support_y_cable, tegra->y_cable_conn);
 		if (!(tegra->int_status & USB_VBUS_STATUS)) {
+			pr_info("%s(%d) tegra->int_status = 0x%lx\n", __func__,
+				__LINE__, tegra->int_status);
 			DBG("%s(%d) Charger disconnect\n", __func__, __LINE__);
 			tegra_otg_set_current(tegra->vbus_bat_reg, 0);
 			tegra_otg_vbus_enable(tegra->vbus_reg, 1);
@@ -457,6 +480,8 @@ static void irq_work(struct work_struct *work)
 	from = otg->phy->state;
 	status = tegra->int_status;
 
+	pr_info("%s(%d) from=%s\n", __func__, __LINE__, tegra_state_name(from));
+
 	/* Debug prints */
 	DBG("%s(%d) status = 0x%lx\n", __func__, __LINE__, status);
 	if ((status & USB_ID_INT_STATUS) &&
@@ -468,6 +493,9 @@ static void irq_work(struct work_struct *work)
 		if (status & USB_VBUS_INT_STATUS)
 			DBG("%s(%d) got vbus interrupt\n", __func__, __LINE__);
 	}
+	
+	pr_info("%s(%d) status=%lx USB_ID_STATUS=%d USB_ID_INT_EN=%d\n",
+		__func__, __LINE__, status, USB_ID_STATUS, USB_ID_INT_EN);
 
 	if (!(status & USB_ID_STATUS) && (status & USB_ID_INT_EN))
 		to = OTG_STATE_A_HOST;
@@ -475,6 +503,20 @@ static void irq_work(struct work_struct *work)
 		to = OTG_STATE_B_PERIPHERAL;
 	else
 		to = OTG_STATE_A_SUSPEND;
+
+
+	// if (!(status & USB_ID_STATUS) && (status & USB_ID_INT_EN)){		
+	// 	to = OTG_STATE_A_HOST;
+	// }
+	// else if (status & USB_VBUS_STATUS && from != OTG_STATE_A_HOST) {
+	// 	to = OTG_STATE_B_PERIPHERAL;
+	// 	if (from == OTG_STATE_A_SUSPEND) {
+	// 		to = OTG_STATE_A_HOST;
+	// 	}
+	// }
+	// else {
+	// 	to = OTG_STATE_A_SUSPEND;
+	// }
 
 	spin_unlock_irqrestore(&tegra->lock, flags);
 	tegra_change_otg_state(tegra, to);
@@ -495,10 +537,12 @@ static irqreturn_t tegra_otg_irq(int irq, void *data)
 
 	if (val & (USB_VBUS_INT_EN | USB_ID_INT_EN)) {
 		DBG("%s(%d) PHY_WAKEUP = 0x%lx\n", __func__, __LINE__, val);
+		pr_info("%s(%d) PHY_WAKEUP = 0x%lx\n", __func__, __LINE__, val);
 		otg_writel(tegra, val, USB_PHY_WAKEUP);
 		if ((val & USB_ID_INT_STATUS) || (val & USB_VBUS_INT_STATUS)) {
 			tegra->int_status &= ~tegra->int_mask;
 			tegra->int_status |= val & tegra->int_mask;
+			pr_info("%s(%d) tegra->int_status=%lx\n", __func__, __LINE__, tegra->int_status);
 			schedule_work(&tegra->work);
 		}
 	}
@@ -543,6 +587,7 @@ static int tegra_otg_set_peripheral(struct usb_otg *otg,
 
 	if ((val & USB_ID_INT_STATUS) || (val & USB_VBUS_INT_STATUS)) {
 		tegra->int_status = val;
+		pr_info("%s(%d) tegra->int_status=%lx\n", __func__, __LINE__, tegra->int_status);
 		schedule_work(&tegra->work);
 	}
 
@@ -739,7 +784,7 @@ static int tegra_otg_conf(struct platform_device *pdev)
 	tegra->turn_off_vbus_on_lp0 =
 			pdata->ehci_pdata->u_data.host.turn_off_vbus_on_lp0;
 	tegra->support_y_cable =
-                true;//pdata->ehci_pdata->u_data.host.support_y_cable;
+			pdata->ehci_pdata->u_data.host.support_y_cable;
 	tegra->y_cable_conn = false;
 	tegra->support_pmu_vbus = pdata->ehci_pdata->support_pmu_vbus;
 	tegra->id_det_gpio = pdata->id_det_gpio ? pdata->id_det_gpio : -1;
@@ -878,6 +923,7 @@ static int tegra_otg_start(struct platform_device *pdev)
 	}
 
 	if (tegra->support_y_cable) {
+		pr_info("%s(%d) support_y_cable=1\n", __func__, __LINE__);
 		tegra->vbus_bat_reg = regulator_get(&pdev->dev, "usb_bat_chg");
 		if (IS_ERR_OR_NULL(tegra->vbus_bat_reg)) {
 			pr_err("failed to get regulator usb_bat_chg: %ld\n",
@@ -1104,6 +1150,7 @@ static void tegra_otg_resume(struct device *dev)
 		if (!tegra->support_pmu_vbus)
 			val |= USB_VBUS_INT_EN | USB_VBUS_WAKEUP_EN;
 		tegra->int_status = val;
+		pr_info("%s(%d) tegra->int_status=%lx\n", __func__, __LINE__, tegra->int_status);
 		spin_unlock_irqrestore(&tegra->lock, flags);
 	}
 
