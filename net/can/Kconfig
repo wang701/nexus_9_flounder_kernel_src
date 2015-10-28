@@ -51,6 +51,14 @@ config CAN_GW
 	  They can be modified with AND/OR/XOR/SET operations as configured
 	  by the netlink configuration interface known e.g. from iptables.
 
+config CAN_ISOBUS
+	tristate "ISOBUS sockets for protocol family CAN"
+	default y
+        ---help---
+          ISO 11783 (commonly referred to as "ISO Bus" or "ISOBUS") is a
+          communication protocol for the agriculture industry based on the 
+          SAE J1939 protocol (which includes CANbus).
+
 source "drivers/net/can/Kconfig"
 
 endif
